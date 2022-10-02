@@ -7,7 +7,8 @@ from urllib.parse import *
 
 def verify(cipher, key, ivector):
     box = AES.new(key, AES.MODE_CBC, iv=ivector)
-    print(box.decrypt(cipher))
+    plain = box.decrypt(cipher)
+    return b'%3Badmin%3Dtrue%3B' in plain
     
 
 def cbc_encryption(uinput, box, ivector):
@@ -29,13 +30,14 @@ def cbc_encryption(uinput, box, ivector):
 
 
 def submit(udata, uinput, sessionid, box, ivector):
+    if ';admin=true;' in uinput:
+        raise ValueError("Incorrect Input Value")
 
-    uinput = udata + uinput + sessionid
-    for x in range(len(uinput)):
-        if uinput[x] == ';' or uinput[x] == '=':
-            uinput = uinput[:x] + quote(uinput[x]) + uinput[x+1:]
+    uinput = (udata + uinput + sessionid).replace\
+                ("=", quote("=")).replace(";", quote(";"))
 
     uinput = pad(uinput.encode('ascii'), 16, style='pkcs7')
+    print(uinput)
     return cbc_encryption(uinput, box, ivector)
     
 
@@ -54,7 +56,7 @@ def main():
     uinput = "userdata=" + input("Input string for encryption: ")
 
     cipher = submit(udata, uinput, sessionid, box, ivector)
-    verify(cipher, key_cbc, ivector)
+    print(verify(cipher, key_cbc, ivector))
 
 
 
