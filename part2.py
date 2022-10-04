@@ -5,13 +5,27 @@ import random
 from urllib.parse import *
 
 
-def verify(cipher, key, ivector):
+def verify(cipher, key, ivector, scram_tuple):
     box = AES.new(key, AES.MODE_CBC, iv=ivector)
-    plain = box.decrypt(cipher)
+    plain = unpad(box.decrypt(cipher), 16, 'pkcs7')
+
+    tlist, scram_help = [], b''
+    for x in range(0, len(plain), 16):
+        tlist.append(plain[x:x+16])
+
+    for y in tlist:
+        xorlist = bytearray()
+        if scram_tuple[0] and y == tlist[2]:
+            for z in range(len(y)):
+                xorlist.append(y[z] ^ scram_tuple[1][z])
+            scram_help += xorlist
+            tlist[2] = scram_help
+            
+    print(tlist)
     return b'%3Badmin%3Dtrue%3B' in plain
     
 
-def cbc_encryption(uinput, box, ivector):
+def cbc_encryption(uinput, box, ivector, scram_tuple):
     # output ciphertext
     ciphertext = b''
 
@@ -21,24 +35,39 @@ def cbc_encryption(uinput, box, ivector):
 
     for y in clist:
         xorlist = bytearray()
-        for index in range(len(y)):
-            xorlist.append(y[index] ^ ivector[index])
-        ivector = box.encrypt(xorlist)
+
+        if scram_tuple[0] and y == clist[1]:
+            for z in range(len(y)):
+                xorlist.append((y[z] ^ ivector[z]) ^ scram_tuple[1][z])
+        else:
+            for index in range(len(y)):
+                xorlist.append(y[index] ^ ivector[index])
         
+        ivector = box.encrypt(xorlist)
+        # print("ivector: " + str(ivector))
         ciphertext += (ivector)
+    
     return ciphertext
 
 
-def submit(udata, uinput, sessionid, box, ivector):
+def submit(udata, uinput, sessionid, box, ivector, scram_tuple):
     if ';admin=true;' in uinput:
-        raise ValueError("Incorrect Input Value")
+        uinput = uinput.replace(";admin=true;", "")
 
     uinput = (udata + uinput + sessionid).replace\
-                ("=", quote("=")).replace(";", quote(";"))
+                    ("=", quote("=")).replace(";", quote(";"))
 
     uinput = pad(uinput.encode('ascii'), 16, style='pkcs7')
-    print(uinput)
-    return cbc_encryption(uinput, box, ivector)
+
+    if scram_tuple[0]:
+        answer = cbc_encryption(uinput, box, ivector, scram_tuple)
+        slist = []
+        for x in range(0, len(answer), 16):
+            slist.append(answer[x:x+16])
+        # print("-- slist -- " + str(slist))
+        return answer
+    else:
+        return cbc_encryption(uinput, box, ivector, scram_tuple)
     
 
 def main():
@@ -55,9 +84,17 @@ def main():
     sessionid = ';session-id=' + str(random.randint(10000, 99999))
     uinput = "userdata=" + input("Input string for encryption: ")
 
-    cipher = submit(udata, uinput, sessionid, box, ivector)
-    print(verify(cipher, key_cbc, ivector))
+    # Last parameter tuple is used to distinguish between nonscrambled
+    # and scrambled versions of the encryption/decryption process
+    scram_true = (True, get_random_bytes(16))
+    scram_false = (False, b'')
 
+    cipher = submit(udata, uinput, sessionid, box, ivector, scram_false)
+    print(verify(cipher, key_cbc, ivector, scram_false))
+
+    # getting verify to return true
+    scrambled_cipher = submit(udata, uinput, sessionid, box, ivector, scram_true)
+    print(verify(scrambled_cipher, key_cbc, ivector, scram_true))
 
 
 
