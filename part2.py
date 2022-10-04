@@ -1,14 +1,16 @@
 from Crypto.Random import *
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import *
-import random
 from urllib.parse import *
+import random
 
-
-def verify(cipher, key, ivector, scram_list):
+def verify(cipher, key, ivector, scram_bool):
+    # CBC encryptor and the plain text after decryption
     box = AES.new(key, AES.MODE_CBC, iv=ivector)
     plain = unpad(box.decrypt(cipher), 16, 'pkcs7')
 
+    # splitting the plain and cipher text back into blocks
+    # for easier access
     tlist, scram_help = [], b''
     clist = []
     for x in range(0, len(plain), 16):
@@ -16,29 +18,39 @@ def verify(cipher, key, ivector, scram_list):
     for c in range(0, len(cipher), 16):
         clist.append(cipher[c:c+16])
 
+    # special case for ';admin=true;'
     for y in tlist:
         xorlist = bytearray()
-        if scram_list[0] and y == tlist[2]:
+
+        # testing for if the loop is at i+1 block and if
+        # is the correct time to trick the verify() function
+        if scram_bool and y == tlist[2]:
+            # A XOR B = C
             for z in range(len(y)):
                 xorlist.append(y[z] ^ clist[1][z])
+
+            # A XOR B = C
+            # A XOR B XOR C = 0
+            # C XOR C = 0
+            # C XOR C XOR 'desired output' = 'desired output'
             xor_calc = bytes(a ^ b for (a, b) in zip(xorlist, xorlist))
             xor_final = bytes(a ^ b for (a, b) in zip(xor_calc, b';admin=true;'))
-            print(xor_final)
             scram_help += xor_final
+            # replace inside plaintext
             tlist[2] = scram_help
             plain = b''
             for item in tlist:
                 plain += item
             
-    print(tlist)
+    print(plain)
     return b'%3Badmin%3Dtrue%3B' in plain or b';admin=true;' in plain
     
 
-def cbc_encryption(uinput, box, ivector, scram_list):
+def cbc_encryption(uinput, box, ivector, scram_bool):
     # output ciphertext
     ciphertext = b''
 
-    clist = []
+    clist = [] # splitting input for easier access
     for x in range(0, len(uinput), 16):
         clist.append(uinput[x:x+16])
 
@@ -49,7 +61,7 @@ def cbc_encryption(uinput, box, ivector, scram_list):
         
         ivector = box.encrypt(xorlist)
         # XORing again to byte flip
-        if scram_list[0] and y == clist[1]:
+        if scram_bool and y == clist[1]:
             xorlist = bytes(a ^ b for (a, b) in zip(ivector, clist[1])) 
             ivector = box.encrypt(xorlist)
 
@@ -58,7 +70,9 @@ def cbc_encryption(uinput, box, ivector, scram_list):
     return ciphertext
 
 
-def submit(udata, uinput, sessionid, box, ivector, scram_list):
+def submit(udata, uinput, sessionid, box, ivector, scram_bool):
+    # removing ';admin=true;' if inside user input, shouldn't be
+    # a part of the submit()/verify() functionality
     if ';admin=true;' in uinput:
         uinput = uinput.replace(";admin=true;", "")
 
@@ -68,13 +82,11 @@ def submit(udata, uinput, sessionid, box, ivector, scram_list):
 
     # padding input and saving it for later
     uinput = pad(uinput.encode('ascii'), 16, style='pkcs7')
-    # scram_list[1] = uinput
-
-    return cbc_encryption(uinput, box, ivector, scram_list)
+    return cbc_encryption(uinput, box, ivector, scram_bool)
     
 
 def main():
-    # KEYS
+    # KEYS (128 bits)
     key_cbc = get_random_bytes(16)
 
     # VECTOR (will also store the previous cipher for ease of access)
@@ -85,20 +97,26 @@ def main():
 
     udata = 'userid=' + str(random.randint(100, 999)) + ';'
     sessionid = ';session-id=' + str(random.randint(10000, 99999))
+    print()
     uinput = "userdata=" + input("Input string for encryption: ")
+    print()
 
-    # Last parameter list is used to distinguish between nonscrambled
+    # Last parameter boolean is used to distinguish between nonscrambled
     # and scrambled versions of the encryption/decryption process
-    scram_true = [True, b'']
-    scram_false = [False, b'']
 
     # running code normally, expected to return false
-    cipher = submit(udata, uinput, sessionid, box, ivector, scram_false)
-    print(verify(cipher, key_cbc, ivector, scram_false))
+    print('--- Normal Process ---')
+    cipher = submit(udata, uinput, sessionid, box, ivector, False)
+    verify_normal = verify(cipher, key_cbc, ivector, False)
+    print("admin string present? -> " + str(verify_normal))
+    print()
 
-    # getting verify to return true
-    scrambled_cipher = submit(udata, uinput, sessionid, box, ivector, scram_true)
-    print(verify(scrambled_cipher, key_cbc, ivector, scram_true))
+    # tricking verify to return true despite same input
+    print('*** Tricking verify() function with bit flipping ***')
+    scrambled_cipher = submit(udata, uinput, sessionid, box, ivector, True)
+    verify_trick = verify(scrambled_cipher, key_cbc, ivector, True)
+    print("admin string present? -> " + str(verify_trick))
+    print()
 
 
 
